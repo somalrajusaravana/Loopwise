@@ -1,9 +1,13 @@
-import { useState } from 'react'
-import { MOCK_ACTIONS, MOCK_FEEDBACK } from '../mock/data'
+import { useState, useEffect } from 'react'
+import type { ReductionAction, CampusLocation, ActionFeedback as FeedbackType } from '../types'
 import ConfidenceBadge from '../components/Confidence/ConfidenceBadge'
 import { calculateConfidence } from '../services/confidence-engine'
 import { useUser } from '../contexts/UserContext'
-import type { ReductionAction, CampusLocation, ActionFeedback } from '../types'
+import {
+  fetchActions,
+  fetchFeedback,
+  createFeedback,
+} from '../services/api'
 
 // Reuse initiatives derived from completed/active actions
 interface ReuseInitiative {
@@ -16,47 +20,61 @@ interface ReuseInitiative {
   communityUpdate: string
 }
 
-function buildInitiatives(): ReuseInitiative[] {
+// Known initiative overrides for seeded actions (preserves polished display text)
+const KNOWN_INITIATIVES: Record<string, { name: string; alternative: string; communityUpdate: string }> = {
+  'act-001': {
+    name: '♻️ Compostable Cups at Dining Hall',
+    alternative: 'Compostable cups and lids replacing single-use plastic',
+    communityUpdate:
+      'Community feedback indicates compostable cups are now available in the south dining area. Multiple independent students have confirmed the switch. Some reports note the back section still has plastic cups.',
+  },
+  'act-004': {
+    name: '🛍️ Paper Bags at Campus Bookstore',
+    alternative: 'Paper bags with reusable bag discount option',
+    communityUpdate:
+      'Students report the bookstore has fully transitioned to paper bags. A sign promoting the reusable bag option is visible at checkout. Community feedback suggests the change is working well.',
+  },
+}
+
+function buildInitiatives(
+  actions: ReductionAction[],
+  feedback: FeedbackType[]
+): ReuseInitiative[] {
   const initiatives: ReuseInitiative[] = []
 
-  const completedActions = MOCK_ACTIONS.filter(
+  const completedOrActive = actions.filter(
     (a) => a.status === 'completed' || a.status === 'active'
   )
 
-  for (const action of completedActions) {
-    const feedback = MOCK_FEEDBACK.filter(
-      (f) => f.actionId === action.id
-    )
-    const confidence = calculateConfidence(feedback)
+  for (const action of completedOrActive) {
+    const actionFeedback = feedback.filter((f) => f.actionId === action.id)
+    const confidence = calculateConfidence(actionFeedback)
 
     let status: ReuseInitiative['status']
     if (confidence.state === 'verified') status = 'Community Verified'
     else if (confidence.state === 'high') status = 'Growing'
     else status = 'Implemented'
 
-    if (action.id === 'act-001') {
-      initiatives.push({
-        id: 'reuse-001',
-        name: '♻️ Compostable Cups at Dining Hall',
-        location: 'Dining Hall',
-        alternative: 'Compostable cups and lids replacing single-use plastic',
-        linkedAction: action,
-        status,
-        communityUpdate:
-          'Community feedback indicates compostable cups are now available in the south dining area. Multiple independent students have confirmed the switch. Some reports note the back section still has plastic cups.',
-      })
-    } else if (action.id === 'act-004') {
-      initiatives.push({
-        id: 'reuse-002',
-        name: '🛍️ Paper Bags at Campus Bookstore',
-        location: 'Student Center',
-        alternative: 'Paper bags with reusable bag discount option',
-        linkedAction: action,
-        status,
-        communityUpdate:
-          'Students report the bookstore has fully transitioned to paper bags. A sign promoting the reusable bag option is visible at checkout. Community feedback suggests the change is working well.',
-      })
-    }
+    const known = KNOWN_INITIATIVES[action.id]
+
+    const name = known?.name ?? `♻️ ${action.title}`
+    const location = action.linkedHotspotLocation ?? 'Campus'
+    const alternative = known?.alternative ?? (action.description || 'Sustainable initiative in progress')
+    const communityUpdate = known?.communityUpdate ?? (
+      feedback.length > 0
+        ? `Community feedback is being gathered for this initiative. ${feedback.length} student contribution${feedback.length !== 1 ? 's' : ''} so far.`
+        : 'This initiative has been implemented. Community feedback will appear here as students share their observations.'
+    )
+
+    initiatives.push({
+      id: `reuse-${action.id}`,
+      name,
+      location,
+      alternative,
+      linkedAction: action,
+      status,
+      communityUpdate,
+    })
   }
 
   return initiatives
@@ -64,39 +82,73 @@ function buildInitiatives(): ReuseInitiative[] {
 
 export default function ReusePage() {
   const { role } = useUser()
-  const initiatives = buildInitiatives()
+  const [initiatives, setInitiatives] = useState<ReuseInitiative[]>([])
+  const [loading, setLoading] = useState(true)
+
+  // Feedback form state
   const [feedbackActionId, setFeedbackActionId] = useState<string | null>(null)
   const [feedbackSentiment, setFeedbackSentiment] = useState<'positive' | 'neutral' | 'negative'>('positive')
   const [feedbackComment, setFeedbackComment] = useState('')
   const [feedbackPhoto, setFeedbackPhoto] = useState<File | null>(null)
   const [feedbackLocation, setFeedbackLocation] = useState<CampusLocation | ''>('')
   const [feedbackSuccess, setFeedbackSuccess] = useState(false)
-  // Local feedback state for new submissions
-  const [localFeedback, setLocalFeedback] = useState<ActionFeedback[]>([])
+  const [localFeedback, setLocalFeedback] = useState<FeedbackType[]>([])
+  const [fetchedFeedback, setFetchedFeedback] = useState<FeedbackType[]>([])
 
-  function handleFeedbackSubmit(e: React.FormEvent) {
+  useEffect(() => {
+    async function load() {
+      const [actions, feedback] = await Promise.all([
+        fetchActions(),
+        fetchFeedback(),
+      ])
+      setFetchedFeedback(feedback)
+      setInitiatives(buildInitiatives(actions, feedback))
+      setLoading(false)
+    }
+    load()
+  }, [])
+
+  async function handleFeedbackSubmit(e: React.FormEvent) {
     e.preventDefault()
     if (!feedbackActionId || !feedbackComment.trim()) return
 
-    const newFeedback: ActionFeedback = {
-      id: `fb-${Date.now()}`,
+    const newFeedback = await createFeedback({
       actionId: feedbackActionId,
-      reporterName: 'Alex Chen',
-      reporterId: 'u-001',
       sentiment: feedbackSentiment,
       comment: feedbackComment.trim(),
-      photoUrl: feedbackPhoto ? URL.createObjectURL(feedbackPhoto) : undefined,
-      date: new Date().toISOString().split('T')[0],
-      location: (feedbackLocation || 'Dining Hall') as CampusLocation,
+      location: feedbackLocation || undefined,
+    })
+
+    if (newFeedback) {
+      setLocalFeedback((prev) => [newFeedback, ...prev])
     }
 
-    setLocalFeedback((prev) => [newFeedback, ...prev])
     setFeedbackActionId(null)
     setFeedbackComment('')
     setFeedbackPhoto(null)
     setFeedbackLocation('')
     setFeedbackSuccess(true)
     setTimeout(() => setFeedbackSuccess(false), 3000)
+  }
+
+  if (loading) {
+    return (
+      <div className="space-y-6">
+        <div>
+          <h2 className="text-2xl font-bold text-surface-800">Reuse</h2>
+          <p className="text-sm text-surface-500 mt-1">Loading...</p>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {[1, 2].map((i) => (
+            <div key={i} className="bg-white rounded-xl border border-surface-200 p-5 animate-pulse">
+              <div className="h-4 bg-surface-200 rounded w-48" />
+              <div className="h-3 bg-surface-200 rounded w-32 mt-2" />
+              <div className="h-16 bg-surface-200 rounded mt-4" />
+            </div>
+          ))}
+        </div>
+      </div>
+    )
   }
 
   return (
@@ -127,8 +179,9 @@ export default function ReusePage() {
       {/* Initiatives Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {initiatives.map((initiative) => {
+          // Merge fetched + local feedback for confidence calculation
           const allFeedback = [
-            ...MOCK_FEEDBACK.filter(
+            ...fetchedFeedback.filter(
               (f) => f.actionId === initiative.linkedAction.id
             ),
             ...localFeedback.filter(

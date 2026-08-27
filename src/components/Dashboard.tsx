@@ -1,9 +1,15 @@
-import { useState } from 'react'
-import { MOCK_DASHBOARD_STATS, MOCK_ACTIONS, MOCK_FEEDBACK } from '../mock/data'
-import type { Observation } from '../types'
+import { useState, useEffect } from 'react'
+import type { Observation, ReductionAction } from '../types'
 import ConfidenceBadge from './Confidence/ConfidenceBadge'
 import { calculateConfidence } from '../services/confidence-engine'
 import { useUser } from '../contexts/UserContext'
+import {
+  fetchDashboardStats,
+  fetchActions,
+  fetchFeedback,
+  createSuggestion,
+  type DashboardStats,
+} from '../services/api'
 
 function formatDate(iso: string) {
   return new Date(iso).toLocaleDateString('en-US', {
@@ -46,27 +52,71 @@ function StatCard({
 
 export default function Dashboard() {
   const { role } = useUser()
-  const stats = MOCK_DASHBOARD_STATS
+  const [stats, setStats] = useState<DashboardStats | null>(null)
+  const [actionsWithFeedback, setActionsWithFeedback] = useState<
+    { action: ReductionAction; confidence: ReturnType<typeof calculateConfidence> }[]
+  >([])
   const [suggestionTitle, setSuggestionTitle] = useState('')
   const [suggestionSuccess, setSuggestionSuccess] = useState(false)
+  const [loading, setLoading] = useState(true)
 
-  // Get actions with feedback for confidence display
-  const actionsWithFeedback = MOCK_ACTIONS.filter(
-    (a) => a.status === 'active' || a.status === 'completed'
-  ).map((action) => ({
-    action,
-    confidence: calculateConfidence(
-      MOCK_FEEDBACK.filter((f) => f.actionId === action.id)
-    ),
-  }))
+  useEffect(() => {
+    async function load() {
+      setLoading(true)
+      const [dashboardStats, actions, feedback] = await Promise.all([
+        fetchDashboardStats(),
+        fetchActions(),
+        fetchFeedback(),
+      ])
 
-  function handleSuggestionSubmit(e: React.FormEvent) {
+      setStats(dashboardStats)
+
+      const actionsWithConfidence = actions
+        .filter((a) => a.status === 'active' || a.status === 'completed')
+        .map((action) => ({
+          action,
+          confidence: calculateConfidence(
+            feedback.filter((f) => f.actionId === action.id)
+          ),
+        }))
+
+      setActionsWithFeedback(actionsWithConfidence)
+      setLoading(false)
+    }
+    load()
+  }, [])
+
+  async function handleSuggestionSubmit(e: React.FormEvent) {
     e.preventDefault()
     if (!suggestionTitle.trim()) return
+
+    await createSuggestion({ title: suggestionTitle.trim() })
     setSuggestionTitle('')
     setSuggestionSuccess(true)
     setTimeout(() => setSuggestionSuccess(false), 3000)
   }
+
+  if (loading) {
+    return (
+      <div className="space-y-8">
+        <div>
+          <h2 className="text-2xl font-bold text-surface-800">Dashboard</h2>
+          <p className="text-sm text-surface-500 mt-1">Loading...</p>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          {[1, 2, 3, 4].map((i) => (
+            <div key={i} className="bg-white rounded-xl border border-surface-200 p-5 animate-pulse">
+              <div className="h-3 bg-surface-200 rounded w-20" />
+              <div className="h-8 bg-surface-200 rounded w-12 mt-2" />
+              <div className="h-3 bg-surface-200 rounded w-24 mt-2" />
+            </div>
+          ))}
+        </div>
+      </div>
+    )
+  }
+
+  if (!stats) return null
 
   return (
     <div className="space-y-8">
@@ -196,7 +246,7 @@ export default function Dashboard() {
               </div>
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-medium text-surface-800 truncate">
-                  {obs.description}
+                  {obs.description || `${obs.plasticCategory.replace('-', ' ')} observation`}
                 </p>
                 <p className="text-xs text-surface-400 mt-0.5">
                   {obs.location} • {obs.reporterName} • {formatDate(obs.date)}

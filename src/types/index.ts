@@ -59,6 +59,8 @@ export interface ReductionAction {
   title: string
   description: string
   linkedHotspotId: string
+  linkedHotspotLocation?: string
+  linkedHotspotCategory?: string
   status: ActionStatus
   createdBy: string
   createdAt: string

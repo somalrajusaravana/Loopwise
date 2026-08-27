@@ -1,43 +1,80 @@
-import {
-  MOCK_OBSERVATIONS,
-  MOCK_HOTSPOTS,
-  MOCK_ACTIONS,
-  MOCK_FEEDBACK,
-} from '../mock/data'
+import { useState, useEffect } from 'react'
+import type { Observation, ReductionAction, ActionFeedback } from '../types'
 import { calculateConfidence } from '../services/confidence-engine'
+import {
+  fetchObservations,
+  fetchActions,
+  fetchFeedback,
+  computeHotspots,
+  type ComputedHotspot,
+} from '../services/api'
 
 export default function ImpactPage() {
+  const [observations, setObservations] = useState<Observation[]>([])
+  const [actions, setActions] = useState<ReductionAction[]>([])
+  const [feedback, setFeedback] = useState<ActionFeedback[]>([])
+  const [hotspots, setHotspots] = useState<ComputedHotspot[]>([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    async function load() {
+      const [obs, acts, fb, hs] = await Promise.all([
+        fetchObservations(),
+        fetchActions(),
+        fetchFeedback(),
+        computeHotspots(),
+      ])
+      setObservations(obs)
+      setActions(acts)
+      setFeedback(fb)
+      setHotspots(hs)
+      setLoading(false)
+    }
+    load()
+  }, [])
+
+  if (loading) {
+    return (
+      <div className="space-y-8">
+        <div>
+          <h2 className="text-2xl font-bold text-surface-800">Impact</h2>
+          <p className="text-sm text-surface-500 mt-1">Loading...</p>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          {[1, 2, 3, 4].map((i) => (
+            <div key={i} className="bg-white rounded-xl border border-surface-200 p-5 animate-pulse">
+              <div className="h-3 bg-surface-200 rounded w-24" />
+              <div className="h-8 bg-surface-200 rounded w-12 mt-2" />
+              <div className="h-3 bg-surface-200 rounded w-28 mt-2" />
+            </div>
+          ))}
+        </div>
+      </div>
+    )
+  }
+
   // Compute metrics from actual data
-  const totalObservations = MOCK_OBSERVATIONS.length
-  const uniqueReporters = new Set(MOCK_OBSERVATIONS.map((o) => o.reporterId)).size
-  const hotspotsIdentified = MOCK_HOTSPOTS.length
-  const activeHotspots = MOCK_HOTSPOTS.filter(
+  const totalObservations = observations.length
+  const uniqueReporters = new Set(observations.map((o) => o.reporterId)).size
+  const hotspotsIdentified = hotspots.length
+  const activeHotspots = hotspots.filter(
     (h) => h.trend !== 'decreasing'
   ).length
 
-  const suggestedActions = MOCK_ACTIONS.filter(
-    (a) => a.status === 'suggested'
-  ).length
-  const adoptedActions = MOCK_ACTIONS.filter(
-    (a) => a.status === 'adopted'
-  ).length
-  const activeActions = MOCK_ACTIONS.filter(
-    (a) => a.status === 'active'
-  ).length
-  const completedActions = MOCK_ACTIONS.filter(
-    (a) => a.status === 'completed'
-  ).length
-  const totalActions = MOCK_ACTIONS.length
+  const suggestedActions = actions.filter((a) => a.status === 'suggested').length
+  const adoptedActions = actions.filter((a) => a.status === 'adopted').length
+  const activeActions = actions.filter((a) => a.status === 'active').length
+  const completedActions = actions.filter((a) => a.status === 'completed').length
+  const totalActions = actions.length
 
-  // Confidence across all actions with feedback
-  const actionsWithConfidence = MOCK_ACTIONS.filter(
-    (a) => a.status === 'active' || a.status === 'completed'
-  ).map((a) => ({
-    action: a,
-    confidence: calculateConfidence(
-      MOCK_FEEDBACK.filter((f) => f.actionId === a.id)
-    ),
-  }))
+  const actionsWithConfidence = actions
+    .filter((a) => a.status === 'active' || a.status === 'completed')
+    .map((a) => ({
+      action: a,
+      confidence: calculateConfidence(
+        feedback.filter((f) => f.actionId === a.id)
+      ),
+    }))
 
   const avgConfidence =
     actionsWithConfidence.length > 0
@@ -49,13 +86,12 @@ export default function ImpactPage() {
         )
       : 0
 
-  const totalFeedback = MOCK_FEEDBACK.length
+  const totalFeedback = feedback.length
   const uniqueFeedbackAuthors = new Set(
-    MOCK_FEEDBACK.map((f) => f.reporterId)
+    feedback.map((f) => f.reporterId)
   ).size
 
-  // Reuse initiatives (completed + active actions)
-  const reuseInitiatives = MOCK_ACTIONS.filter(
+  const reuseInitiatives = actions.filter(
     (a) => a.status === 'completed' || a.status === 'active'
   ).length
 

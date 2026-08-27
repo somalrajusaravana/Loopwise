@@ -1,7 +1,6 @@
 import { useState } from 'react'
 import type { PlasticCategory, CampusLocation, Observation } from '../../types'
-import { CURRENT_USER, MOCK_OBSERVATIONS } from '../../mock/data'
-import { assessContribution } from '../../utils/contribution-guard'
+import { createObservation, uploadPhoto } from '../../services/api'
 
 const PLASTIC_CATEGORIES: { value: PlasticCategory; label: string }[] = [
   { value: 'straws', label: 'Straws' },
@@ -41,13 +40,6 @@ export default function ObservationForm({ onSubmit }: Props) {
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState(false)
 
-  // Contribution protection check (duplicate detection only)
-  const protection = assessContribution(
-    CURRENT_USER.id,
-    {},
-    MOCK_OBSERVATIONS
-  )
-
   // Photo is required; category, location are required; description is optional
   const canSubmit = !!photoFile && !!category && !!location
 
@@ -58,48 +50,51 @@ export default function ObservationForm({ onSubmit }: Props) {
     setIsSubmitting(true)
     setError(null)
 
-    // Simulate API delay
-    await new Promise((r) => setTimeout(r, 800))
+    try {
+      // 1. Upload photo to Supabase Storage (or blob URL in mock mode)
+      let photoStoragePath: string | undefined
+      if (photoFile) {
+        const uploadedPath = await uploadPhoto('observation-photos', photoFile)
+        if (uploadedPath) {
+          photoStoragePath = uploadedPath
+        }
+      }
 
-    const newObservation: Observation = {
-      id: `obs-${Date.now()}`,
-      plasticCategory: category as PlasticCategory,
-      location: location as CampusLocation,
-      description: description.trim(),
-      photoUrl: URL.createObjectURL(photoFile),
-      date: new Date().toISOString(),
-      reporterName: CURRENT_USER.name,
-      reporterId: CURRENT_USER.id,
-      flaggedForReview: protection.duplicateFlag,
-      pointsAwarded: Math.round(10 * protection.pointsMultiplier),
+      // 2. Create observation via API
+      const newObservation = await createObservation({
+        plasticCategory: category as PlasticCategory,
+        location: location as CampusLocation,
+        description: description.trim() || undefined,
+        photoStoragePath,
+      })
+
+      if (newObservation) {
+        onSubmit(newObservation)
+        setSuccess(true)
+
+        // Reset form
+        setCategory('')
+        setLocation('')
+        setDescription('')
+        setPhotoFile(null)
+
+        setTimeout(() => setSuccess(false), 3000)
+      } else {
+        setError('Failed to submit observation. Please try again.')
+      }
+    } catch {
+      setError('An error occurred. Please try again.')
+    } finally {
+      setIsSubmitting(false)
     }
-
-    onSubmit(newObservation)
-    setIsSubmitting(false)
-    setSuccess(true)
-
-    // Reset form
-    setCategory('')
-    setLocation('')
-    setDescription('')
-    setPhotoFile(null)
-
-    setTimeout(() => setSuccess(false), 3000)
   }
 
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
-      {/* Duplicate flag */}
-      {protection.duplicateFlag && (
-        <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 text-sm text-amber-700">
-          ⚠ Similar evidence detected. This may be flagged for review. You&apos;ll still earn points (reduced).
-        </div>
-      )}
-
       {/* Success message */}
       {success && (
         <div className="bg-brand-50 border border-brand-200 rounded-lg px-4 py-3 text-sm text-brand-700">
-          ✓ Observation submitted successfully! +{Math.round(10 * protection.pointsMultiplier)} points
+          ✓ Observation submitted successfully! +10 points
         </div>
       )}
 
