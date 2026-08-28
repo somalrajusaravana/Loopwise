@@ -61,6 +61,7 @@ export interface ReductionAction {
   linkedHotspotId: string
   linkedHotspotLocation?: string
   linkedHotspotCategory?: string
+  sourceSuggestionId?: string  // Link to student suggestion if created from one
   status: ActionStatus
   createdBy: string
   createdAt: string

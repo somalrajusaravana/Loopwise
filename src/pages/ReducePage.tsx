@@ -9,6 +9,9 @@ import {
   fetchFeedback,
   fetchSuggestions,
   createSuggestion,
+  createAction,
+  adoptSuggestion,
+  dismissSuggestion,
   updateActionStatus,
   type ComputedHotspot,
   type StudentSuggestion,
@@ -68,6 +71,13 @@ export default function ReducePage() {
   const [sugExplanation, setSugExplanation] = useState('')
   const [sugLocation, setSugLocation] = useState('')
   const [sugSuccess, setSugSuccess] = useState(false)
+
+  // Create Action from Suggestion state
+  const [creatingFromSuggestion, setCreatingFromSuggestion] = useState<string | null>(null)
+  const [actionTitle, setActionTitle] = useState('')
+  const [actionDescription, setActionDescription] = useState('')
+  const [actionLocation, setActionLocation] = useState('')
+  const [creatingLoading, setCreatingLoading] = useState(false)
 
   useEffect(() => {
     async function load() {
@@ -162,6 +172,60 @@ export default function ReducePage() {
     setSuggestions(updated)
 
     setTimeout(() => setSugSuccess(false), 3000)
+  }
+
+  function openCreateActionForm(sug: StudentSuggestion) {
+    setCreatingFromSuggestion(sug.id)
+    setActionTitle(sug.title)
+    setActionDescription(sug.explanation ?? '')
+    setActionLocation(sug.relatedLocation ?? '')
+  }
+
+  function cancelCreateAction() {
+    setCreatingFromSuggestion(null)
+    setActionTitle('')
+    setActionDescription('')
+    setActionLocation('')
+  }
+
+  async function handleCreateActionFromSuggestion(sugId: string) {
+    if (!actionTitle.trim()) return
+
+    setCreatingLoading(true)
+    try {
+      const newAction = await createAction({
+        title: actionTitle.trim(),
+        description: actionDescription.trim() || undefined,
+        linkedHotspotLocation: actionLocation || undefined,
+        sourceSuggestionId: sugId,
+      })
+
+      if (newAction) {
+        // Mark suggestion as adopted
+        await adoptSuggestion(sugId)
+
+        // Refresh both lists
+        const [updatedActions, updatedSuggestions] = await Promise.all([
+          fetchActions(),
+          fetchSuggestions(),
+        ])
+        setActions(updatedActions)
+        setSuggestions(updatedSuggestions)
+
+        // Reset form
+        cancelCreateAction()
+      }
+    } finally {
+      setCreatingLoading(false)
+    }
+  }
+
+  async function handleDismissSuggestion(sugId: string) {
+    if (!window.confirm('Dismiss this suggestion? It will be marked as dismissed.')) return
+
+    await dismissSuggestion(sugId)
+    const updated = await fetchSuggestions()
+    setSuggestions(updated)
   }
 
   if (loading) {
@@ -636,10 +700,23 @@ export default function ReducePage() {
                 className="bg-white rounded-xl border border-surface-200 p-4"
               >
                 <div className="flex items-start justify-between">
-                  <div>
-                    <p className="text-sm font-medium text-surface-800">
-                      {sug.title}
-                    </p>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <p className="text-sm font-medium text-surface-800">
+                        {sug.title}
+                      </p>
+                      <span
+                        className={`text-xs font-semibold px-2 py-0.5 rounded-full ${
+                          sug.status === 'adopted'
+                            ? 'text-emerald-600 bg-emerald-50 border border-emerald-200'
+                            : sug.status === 'dismissed'
+                            ? 'text-red-600 bg-red-50 border border-red-200'
+                            : 'text-surface-600 bg-surface-100 border border-surface-200'
+                        }`}
+                      >
+                        {sug.status.charAt(0).toUpperCase() + sug.status.slice(1)}
+                      </span>
+                    </div>
                     {sug.explanation && (
                       <p className="text-xs text-surface-500 mt-1">
                         {sug.explanation}
@@ -651,18 +728,91 @@ export default function ReducePage() {
                       </p>
                     )}
                   </div>
-                  <span
-                    className={`text-xs font-semibold px-2 py-0.5 rounded-full ${
-                      sug.status === 'adopted'
-                        ? 'text-emerald-600 bg-emerald-50 border border-emerald-200'
-                        : sug.status === 'dismissed'
-                        ? 'text-red-600 bg-red-50 border border-red-200'
-                        : 'text-surface-600 bg-surface-100 border border-surface-200'
-                    }`}
-                  >
-                    {sug.status.charAt(0).toUpperCase() + sug.status.slice(1)}
-                  </span>
                 </div>
+
+                {/* Eco Club action buttons for pending suggestions */}
+                {role === 'eco-club' && sug.status === 'pending' && creatingFromSuggestion !== sug.id && (
+                  <div className="flex gap-2 mt-3 pt-3 border-t border-surface-100">
+                    <button
+                      onClick={() => openCreateActionForm(sug)}
+                      className="px-3 py-1.5 bg-brand-600 text-white text-xs font-medium rounded-lg hover:bg-brand-700 transition-colors"
+                    >
+                      🚀 Create Action
+                    </button>
+                    <button
+                      onClick={() => handleDismissSuggestion(sug.id)}
+                      className="px-3 py-1.5 text-xs font-medium text-surface-500 hover:text-red-600 border border-surface-200 rounded-lg hover:bg-red-50 transition-colors"
+                    >
+                      Dismiss
+                    </button>
+                  </div>
+                )}
+
+                {/* Inline Create Action form */}
+                {role === 'eco-club' && creatingFromSuggestion === sug.id && (
+                  <div className="mt-3 pt-3 border-t border-surface-100 space-y-3">
+                    <p className="text-xs font-medium text-surface-500">
+                      Create Reduction Action from this suggestion
+                    </p>
+                    <div>
+                      <label className="block text-xs font-medium text-surface-600 mb-1">
+                        Action Title *
+                      </label>
+                      <input
+                        type="text"
+                        value={actionTitle}
+                        onChange={(e) => setActionTitle(e.target.value)}
+                        className="w-full border border-surface-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none"
+                        required
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-surface-600 mb-1">
+                        Description <span className="text-surface-400">(optional)</span>
+                      </label>
+                      <textarea
+                        value={actionDescription}
+                        onChange={(e) => setActionDescription(e.target.value)}
+                        rows={2}
+                        className="w-full border border-surface-300 rounded-lg px-3 py-2 text-xs focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none resize-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-surface-600 mb-1">
+                        Related Location <span className="text-surface-400">(optional)</span>
+                      </label>
+                      <select
+                        value={actionLocation}
+                        onChange={(e) => setActionLocation(e.target.value)}
+                        className="w-full border border-surface-300 rounded-lg px-3 py-2 text-xs focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none"
+                      >
+                        <option value="">Select a location…</option>
+                        {[
+                          'Dining Hall', 'Student Center', 'Library', 'Gym',
+                          'Lecture Halls', 'Dorms', 'Café / Coffee Shop',
+                        ].map((loc) => (
+                          <option key={loc} value={loc}>{loc}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => handleCreateActionFromSuggestion(sug.id)}
+                        disabled={!actionTitle.trim() || creatingLoading}
+                        className="px-3 py-1.5 bg-brand-600 text-white text-xs font-medium rounded-lg hover:bg-brand-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                      >
+                        {creatingLoading ? 'Creating…' : '✓ Confirm & Create Action'}
+                      </button>
+                      <button
+                        onClick={cancelCreateAction}
+                        disabled={creatingLoading}
+                        className="px-3 py-1.5 text-xs text-surface-500 hover:text-surface-700 transition-colors"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
             ))}
           </div>

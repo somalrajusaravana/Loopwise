@@ -78,6 +78,7 @@ export interface Database {
           status: 'suggested' | 'adopted' | 'active' | 'completed'
           linked_hotspot_location: string | null
           linked_hotspot_category: string | null
+          source_suggestion_id: string | null
           created_by: string | null
           assigned_to: string | null
           start_date: string | null
@@ -92,6 +93,7 @@ export interface Database {
           status?: 'suggested' | 'adopted' | 'active' | 'completed'
           linked_hotspot_location?: string | null
           linked_hotspot_category?: string | null
+          source_suggestion_id?: string | null
           created_by?: string | null
           assigned_to?: string | null
           start_date?: string | null
@@ -106,6 +108,7 @@ export interface Database {
           status?: 'suggested' | 'adopted' | 'active' | 'completed'
           linked_hotspot_location?: string | null
           linked_hotspot_category?: string | null
+          source_suggestion_id?: string | null
           created_by?: string | null
           assigned_to?: string | null
           start_date?: string | null

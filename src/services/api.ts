@@ -54,6 +54,7 @@ function mapAction(row: Database['public']['Tables']['reduction_actions']['Row']
     linkedHotspotId: '', // No longer a FK — computed from location+category
     linkedHotspotLocation: row.linked_hotspot_location ?? undefined,
     linkedHotspotCategory: row.linked_hotspot_category ?? undefined,
+    sourceSuggestionId: row.source_suggestion_id ?? undefined,
     status: row.status,
     createdBy: MOCK_REPORTERS.find((r) => r.id === row.created_by)?.name ?? 'Eco Club',
     createdAt: row.created_at,
@@ -132,6 +133,7 @@ export async function createObservation(obs: {
   const { data, error } = await supabase
     .from('observations')
     .insert({
+      id: `obs-${Date.now()}`,
       plastic_category: obs.plasticCategory,
       location: obs.location,
       description: obs.description ?? null,
@@ -238,6 +240,7 @@ export async function createAction(action: {
   description?: string
   linkedHotspotLocation?: string
   linkedHotspotCategory?: string
+  sourceSuggestionId?: string
   assignedTo?: string
 }): Promise<ReductionAction | null> {
   if (!isSupabaseConfigured()) {
@@ -248,6 +251,7 @@ export async function createAction(action: {
       linkedHotspotId: '',
       linkedHotspotLocation: action.linkedHotspotLocation,
       linkedHotspotCategory: action.linkedHotspotCategory,
+      sourceSuggestionId: action.sourceSuggestionId,
       status: 'suggested',
       createdBy: CURRENT_USER.name,
       createdAt: new Date().toISOString(),
@@ -257,18 +261,37 @@ export async function createAction(action: {
     return newAction
   }
 
-  const { data, error } = await supabase
+  // Try with source_suggestion_id first; fall back without it if column doesn't exist
+  let insertData: Record<string, unknown> = {
+    id: `act-${Date.now()}`,
+    title: action.title,
+    description: action.description ?? null,
+    linked_hotspot_location: action.linkedHotspotLocation ?? null,
+    linked_hotspot_category: action.linkedHotspotCategory ?? null,
+    created_by: CURRENT_USER.id,
+    assigned_to: action.assignedTo ?? 'Unassigned',
+  }
+  if (action.sourceSuggestionId) {
+    insertData.source_suggestion_id = action.sourceSuggestionId
+  }
+
+  let { data, error } = await supabase
     .from('reduction_actions')
-    .insert({
-      title: action.title,
-      description: action.description ?? null,
-      linked_hotspot_location: action.linkedHotspotLocation ?? null,
-      linked_hotspot_category: action.linkedHotspotCategory ?? null,
-      created_by: CURRENT_USER.id,
-      assigned_to: action.assignedTo ?? 'Unassigned',
-    })
+    .insert(insertData)
     .select()
     .single()
+
+  // If insert failed (e.g. source_suggestion_id column doesn't exist yet), retry without it
+  if (error && action.sourceSuggestionId) {
+    delete insertData.source_suggestion_id
+    const retry = await supabase
+      .from('reduction_actions')
+      .insert(insertData)
+      .select()
+      .single()
+    data = retry.data
+    error = retry.error
+  }
 
   if (error) {
     console.error('Failed to create action:', error)
@@ -365,6 +388,7 @@ export async function createFeedback(feedback: {
   const { data, error } = await supabase
     .from('action_feedback')
     .insert({
+      id: `fb-${Date.now()}`,
       action_id: feedback.actionId,
       sentiment: feedback.sentiment,
       comment: feedback.comment,
@@ -441,6 +465,7 @@ export async function createSuggestion(suggestion: {
   const { data, error } = await supabase
     .from('student_suggestions')
     .insert({
+      id: `sug-${Date.now()}`,
       title: suggestion.title,
       explanation: suggestion.explanation ?? null,
       related_location: suggestion.relatedLocation ?? null,
@@ -463,6 +488,38 @@ export async function createSuggestion(suggestion: {
     reporterId: data.reporter_id ?? '',
     createdAt: data.created_at,
   }
+}
+
+// ── Suggestion Management ─────────────────────────────────
+
+export async function adoptSuggestion(suggestionId: string): Promise<boolean> {
+  if (!isSupabaseConfigured()) return false
+
+  const { error } = await supabase
+    .from('student_suggestions')
+    .update({ status: 'adopted' })
+    .eq('id', suggestionId)
+
+  if (error) {
+    console.error('Failed to adopt suggestion:', error)
+    return false
+  }
+  return true
+}
+
+export async function dismissSuggestion(suggestionId: string): Promise<boolean> {
+  if (!isSupabaseConfigured()) return false
+
+  const { error } = await supabase
+    .from('student_suggestions')
+    .update({ status: 'dismissed' })
+    .eq('id', suggestionId)
+
+  if (error) {
+    console.error('Failed to dismiss suggestion:', error)
+    return false
+  }
+  return true
 }
 
 // ── Dashboard Stats ─────────────────────────────────────────
