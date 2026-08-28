@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import type { ReductionAction } from '../types'
+import type { ReductionAction, ActionStatus } from '../types'
 import ConfidenceBadge from '../components/Confidence/ConfidenceBadge'
 import { calculateConfidence } from '../services/confidence-engine'
 import { useUser } from '../contexts/UserContext'
@@ -9,6 +9,7 @@ import {
   fetchFeedback,
   fetchSuggestions,
   createSuggestion,
+  updateActionStatus,
   type ComputedHotspot,
   type StudentSuggestion,
 } from '../services/api'
@@ -35,8 +36,21 @@ function getActionForHotspot(
   )
 }
 
+// Valid forward-only lifecycle transitions
+const VALID_TRANSITIONS: Record<string, { next: string; label: string; confirm: string }[]> = {
+  suggested: [
+    { next: 'adopted', label: '🤝 Adopt', confirm: 'Adopt this action? The Eco Club will take ownership.' },
+  ],
+  adopted: [
+    { next: 'active', label: '🟢 Start', confirm: 'Mark this action as actively being implemented?' },
+  ],
+  active: [
+    { next: 'completed', label: '✅ Complete', confirm: 'Mark this action as completed?' },
+  ],
+}
+
 export default function ReducePage() {
-  useUser() // Ensure UserProvider context is available
+  const { role } = useUser()
   const [patterns, setPatterns] = useState<ComputedHotspot[]>([])
   const [actions, setActions] = useState<ReductionAction[]>([])
   const [allFeedback, setAllFeedback] = useState<ReturnType<typeof calculateConfidence>[]>([])
@@ -44,6 +58,10 @@ export default function ReducePage() {
   const [activeTab, setActiveTab] = useState<StatusTab>('all')
   const [expandedAction, setExpandedAction] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
+
+  // Action lifecycle state
+  const [updatingActionId, setUpdatingActionId] = useState<string | null>(null)
+  const [statusError, setStatusError] = useState<string | null>(null)
 
   // Suggestion form state
   const [sugTitle, setSugTitle] = useState('')
@@ -72,6 +90,52 @@ export default function ReducePage() {
     }
     load()
   }, [])
+
+  async function handleStatusChange(actionId: string, newStatus: string) {
+    const action = actions.find((a) => a.id === actionId)
+    if (!action) return
+
+    const transition = VALID_TRANSITIONS[action.status]?.find(
+      (t) => t.next === newStatus
+    )
+    if (!transition) return
+
+    if (!window.confirm(transition.confirm)) return
+
+    setUpdatingActionId(actionId)
+    setStatusError(null)
+
+    try {
+      const success = await updateActionStatus(
+        actionId,
+        newStatus as 'adopted' | 'active' | 'completed'
+      )
+
+      if (success) {
+        // Update local state immediately
+        setActions((prev) =>
+          prev.map((a) => {
+            if (a.id !== actionId) return a
+            const today = new Date().toISOString().split('T')[0]
+            return {
+              ...a,
+              status: newStatus as ActionStatus,
+              startDate:
+                newStatus === 'active' ? today : a.startDate,
+              completedDate:
+                newStatus === 'completed' ? today : a.completedDate,
+            }
+          })
+        )
+      } else {
+        setStatusError('Failed to update status. Please try again.')
+      }
+    } catch {
+      setStatusError('An error occurred while updating status.')
+    } finally {
+      setUpdatingActionId(null)
+    }
+  }
 
   const filteredActions =
     activeTab === 'all'
@@ -429,6 +493,45 @@ export default function ReducePage() {
                               </li>
                             ))}
                           </ul>
+                        </div>
+                      )}
+
+                      {/* ── Lifecycle Controls (Eco Club only) ── */}
+                      {role === 'eco-club' && (
+                        <div className="border-t border-surface-100 pt-4">
+                          <span className="text-xs font-medium text-surface-500 block mb-2">
+                            Manage Action
+                          </span>
+                          {statusError && (
+                            <p className="text-xs text-red-500 mb-2">
+                              {statusError}
+                            </p>
+                          )}
+                          <div className="flex gap-2 flex-wrap">
+                            {VALID_TRANSITIONS[action.status]?.map((t) => (
+                              <button
+                                key={t.next}
+                                onClick={() => handleStatusChange(action.id, t.next)}
+                                disabled={updatingActionId === action.id}
+                                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                                  t.next === 'adopted'
+                                    ? 'bg-blue-600 text-white hover:bg-blue-700'
+                                    : t.next === 'active'
+                                    ? 'bg-brand-600 text-white hover:bg-brand-700'
+                                    : 'bg-emerald-600 text-white hover:bg-emerald-700'
+                                } disabled:opacity-50 disabled:cursor-not-allowed`}
+                              >
+                                {updatingActionId === action.id
+                                  ? 'Updating…'
+                                  : t.label}
+                              </button>
+                            ))}
+                            {(!VALID_TRANSITIONS[action.status] || VALID_TRANSITIONS[action.status].length === 0) && (
+                              <span className="text-xs text-surface-400 italic">
+                                Action is completed — no further changes
+                              </span>
+                            )}
+                          </div>
                         </div>
                       )}
                     </div>
