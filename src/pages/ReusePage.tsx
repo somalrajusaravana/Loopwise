@@ -1,13 +1,21 @@
 import { useState, useEffect } from 'react'
-import type { ReductionAction, CampusLocation, ActionFeedback as FeedbackType } from '../types'
+import type { ReductionAction, CampusLocation, ActionFeedback as FeedbackType, Observation } from '../types'
 import ConfidenceBadge from '../components/Confidence/ConfidenceBadge'
 import { calculateConfidence } from '../services/confidence-engine'
-import { useUser } from '../contexts/UserContext'
+import { useAuth } from '../contexts/AuthContext'
 import {
   fetchActions,
   fetchFeedback,
   createFeedback,
+  fetchObservations,
+  fetchReuseListings,
+  fetchReuseRequests,
+  fetchCampusLocations,
+  type ReuseListing,
+  type ReuseRequest,
+  type CampusLocationEntry,
 } from '../services/api'
+import { rewardFeedback } from '../services/points-engine'
 
 // Reuse initiatives derived from completed/active actions
 interface ReuseInitiative {
@@ -60,11 +68,9 @@ function buildInitiatives(
     const name = known?.name ?? `♻️ ${action.title}`
     const location = action.linkedHotspotLocation ?? 'Campus'
     const alternative = known?.alternative ?? (action.description || 'Sustainable initiative in progress')
-    const communityUpdate = known?.communityUpdate ?? (
-      feedback.length > 0
-        ? `Community feedback is being gathered for this initiative. ${feedback.length} student contribution${feedback.length !== 1 ? 's' : ''} so far.`
-        : 'This initiative has been implemented. Community feedback will appear here as students share their observations.'
-    )
+
+    // Dynamic community update from real feedback data
+    const communityUpdate = known?.communityUpdate ?? generateCommunityUpdate(actionFeedback, action)
 
     initiatives.push({
       id: `reuse-${action.id}`,
@@ -80,8 +86,32 @@ function buildInitiatives(
   return initiatives
 }
 
+function generateCommunityUpdate(feedback: FeedbackType[], action: ReductionAction): string {
+  if (feedback.length === 0) {
+    return 'This initiative has been implemented. Community feedback will appear here as students share their observations.'
+  }
+
+  const positive = feedback.filter((f) => f.sentiment === 'positive').length
+  const negative = feedback.filter((f) => f.sentiment === 'negative').length
+  const contributors = new Set(feedback.map((f) => f.reporterId)).size
+
+  let summary = `${contributors} student${contributors !== 1 ? 's' : ''} have shared feedback about this initiative.`
+
+  if (positive > 0 && negative === 0) {
+    summary += ` All reports are positive — the community confirms the ${action.linkedHotspotLocation ?? 'initiative'} change is working.`
+  } else if (negative > 0 && positive === 0) {
+    summary += ` Reports indicate the initiative may not be fully implemented yet.`
+  } else if (positive > negative) {
+    summary += ` Most feedback is positive, though some concerns have been noted.`
+  } else {
+    summary += ` Feedback is mixed — the Eco Club may want to review the community response.`
+  }
+
+  return summary
+}
+
 export default function ReusePage() {
-  const { role } = useUser()
+  const { role, appUser } = useAuth()
   const [initiatives, setInitiatives] = useState<ReuseInitiative[]>([])
   const [loading, setLoading] = useState(true)
 
@@ -94,15 +124,29 @@ export default function ReusePage() {
   const [feedbackSuccess, setFeedbackSuccess] = useState(false)
   const [localFeedback, setLocalFeedback] = useState<FeedbackType[]>([])
   const [fetchedFeedback, setFetchedFeedback] = useState<FeedbackType[]>([])
+  const [allActions, setAllActions] = useState<ReductionAction[]>([])
+  const [allObservations, setAllObservations] = useState<Observation[]>([])
+  const [reuseListings, setReuseListings] = useState<ReuseListing[]>([])
+  const [reuseRequests, setReuseRequests] = useState<ReuseRequest[]>([])
+  const [campusLocations, setCampusLocations] = useState<CampusLocationEntry[]>([])
 
   useEffect(() => {
     async function load() {
-      const [actions, feedback] = await Promise.all([
+      const [actions, feedback, observations, listings, requests, locations] = await Promise.all([
         fetchActions(),
         fetchFeedback(),
+        fetchObservations(),
+        fetchReuseListings(),
+        fetchReuseRequests(),
+        fetchCampusLocations(),
       ])
+      setAllActions(actions)
+      setAllObservations(observations)
       setFetchedFeedback(feedback)
       setInitiatives(buildInitiatives(actions, feedback))
+      setReuseListings(listings)
+      setReuseRequests(requests)
+      setCampusLocations(locations)
       setLoading(false)
     }
     load()
@@ -116,12 +160,22 @@ export default function ReusePage() {
       actionId: feedbackActionId,
       sentiment: feedbackSentiment,
       comment: feedbackComment.trim(),
+      photoFile: feedbackPhoto ?? undefined,
       location: feedbackLocation || undefined,
+      userId: appUser?.id ?? '',
     })
 
     if (newFeedback) {
       setLocalFeedback((prev) => [newFeedback, ...prev])
+
+      // Award feedback points + check Before → After bonus
+      await rewardFeedback(newFeedback, allObservations, allActions)
     }
+
+    // Re-fetch feedback from Supabase to ensure persistence
+    const refreshedFeedback = await fetchFeedback()
+    setFetchedFeedback(refreshedFeedback)
+    setLocalFeedback([]) // Clear optimistic state since fetchedFeedback now has everything
 
     setFeedbackActionId(null)
     setFeedbackComment('')
@@ -179,8 +233,8 @@ export default function ReusePage() {
       {/* Initiatives Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {initiatives.map((initiative) => {
-          // Merge fetched + local feedback for confidence calculation
-          const allFeedback = [
+          // Merge fetched + local feedback, deduplicate by id
+          const allFeedbackRaw = [
             ...fetchedFeedback.filter(
               (f) => f.actionId === initiative.linkedAction.id
             ),
@@ -188,6 +242,12 @@ export default function ReusePage() {
               (f) => f.actionId === initiative.linkedAction.id
             ),
           ]
+          const seen = new Set<string>()
+          const allFeedback = allFeedbackRaw.filter((f) => {
+            if (seen.has(f.id)) return false
+            seen.add(f.id)
+            return true
+          })
           const confidence = calculateConfidence(allFeedback)
           const isShowingFeedbackForm = feedbackActionId === initiative.linkedAction.id
 
@@ -254,6 +314,53 @@ export default function ReusePage() {
                   {initiative.communityUpdate}
                 </p>
               </div>
+
+              {/* Recent Feedback Snippets */}
+              {allFeedback.length > 0 && (
+                <div className="mt-3">
+                  <p className="text-xs font-medium text-surface-500 mb-2">
+                    Recent Community Feedback
+                  </p>
+                  <div className="space-y-2">
+                    {allFeedback.slice(-3).reverse().map((fb) => (
+                      <div
+                        key={fb.id}
+                        className="bg-surface-50 rounded-lg px-3 py-2"
+                      >
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className="text-xs font-medium text-surface-700">
+                            {fb.reporterName}
+                          </span>
+                          <span
+                            className={`text-xs ${
+                              fb.sentiment === 'positive'
+                                ? 'text-emerald-600'
+                                : fb.sentiment === 'negative'
+                                ? 'text-red-500'
+                                : 'text-surface-400'
+                            }`}
+                          >
+                            {fb.sentiment === 'positive'
+                              ? '👍'
+                              : fb.sentiment === 'negative'
+                              ? '👎'
+                              : '🤔'}
+                          </span>
+                          <span className="text-xs text-surface-400">
+                            {new Date(fb.date).toLocaleDateString('en-US', {
+                              month: 'short',
+                              day: 'numeric',
+                            })}
+                          </span>
+                        </div>
+                        <p className="text-xs text-surface-600 leading-relaxed">
+                          {fb.comment}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               {/* Linked Action */}
               <div className="mt-3 flex items-center gap-2">
@@ -408,6 +515,64 @@ export default function ReusePage() {
           <p className="text-xs text-surface-400 mt-1">
             Initiatives will appear here as Eco Club actions are completed
           </p>
+        </div>
+      )}
+
+      {/* Community Reuse Listings */}
+      {reuseListings.length > 0 && (
+        <div>
+          <h3 className="text-lg font-semibold text-surface-800 mb-2">
+            🔄 Available Reuse Items
+          </h3>
+          <p className="text-xs text-surface-400 mb-4">
+            Items shared by the campus community for reuse
+          </p>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {reuseListings.map((listing) => {
+              const locationName = campusLocations.find((l) => l.id === listing.locationId)?.name ?? 'Campus'
+              const requestCount = reuseRequests.filter((r) => r.listingId === listing.id).length
+              const pendingRequests = reuseRequests.filter((r) => r.listingId === listing.id && r.status === 'pending').length
+
+              return (
+                <div
+                  key={listing.id}
+                  className="bg-white rounded-xl border border-surface-200 p-5"
+                >
+                  <div className="flex items-start justify-between">
+                    <h4 className="text-sm font-semibold text-surface-800">
+                      {listing.itemName}
+                    </h4>
+                    <span
+                      className={`text-xs font-semibold px-2 py-0.5 rounded-full ${
+                        listing.status === 'available'
+                          ? 'text-emerald-600 bg-emerald-50 border border-emerald-200'
+                          : listing.status === 'reserved'
+                          ? 'text-amber-600 bg-amber-50 border border-amber-200'
+                          : 'text-surface-600 bg-surface-100 border border-surface-200'
+                      }`}
+                    >
+                      {listing.status.charAt(0).toUpperCase() + listing.status.slice(1)}
+                    </span>
+                  </div>
+                  <p className="text-xs text-surface-400 mt-1">
+                    📍 {locationName}
+                  </p>
+                  <p className="text-sm text-surface-600 mt-2">
+                    {listing.description}
+                  </p>
+                  <div className="flex items-center gap-4 mt-3 text-xs text-surface-400">
+                    <span>Qty: {listing.quantity}</span>
+                    <span>Condition: {listing.condition}</span>
+                    {requestCount > 0 && (
+                      <span className="text-brand-600 font-medium">
+                        {requestCount} request{requestCount !== 1 ? 's' : ''}{pendingRequests > 0 ? ` (${pendingRequests} pending)` : ''}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
         </div>
       )}
     </div>

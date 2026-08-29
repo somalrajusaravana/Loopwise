@@ -2,13 +2,12 @@ import { useState, useEffect } from 'react'
 import type { ReductionAction, ActionStatus } from '../types'
 import ConfidenceBadge from '../components/Confidence/ConfidenceBadge'
 import { calculateConfidence } from '../services/confidence-engine'
-import { useUser } from '../contexts/UserContext'
+import { useAuth } from '../contexts/AuthContext'
 import {
   computeHotspots,
   fetchActions,
   fetchFeedback,
   fetchSuggestions,
-  createSuggestion,
   createAction,
   adoptSuggestion,
   dismissSuggestion,
@@ -16,6 +15,7 @@ import {
   type ComputedHotspot,
   type StudentSuggestion,
 } from '../services/api'
+import { rewardSuggestionAdoption } from '../services/points-engine'
 
 const STATUS_TABS = [
   { key: 'all', label: 'All' },
@@ -53,7 +53,7 @@ const VALID_TRANSITIONS: Record<string, { next: string; label: string; confirm: 
 }
 
 export default function ReducePage() {
-  const { role } = useUser()
+  const { role, appUser } = useAuth()
   const [patterns, setPatterns] = useState<ComputedHotspot[]>([])
   const [actions, setActions] = useState<ReductionAction[]>([])
   const [allFeedback, setAllFeedback] = useState<ReturnType<typeof calculateConfidence>[]>([])
@@ -65,12 +65,6 @@ export default function ReducePage() {
   // Action lifecycle state
   const [updatingActionId, setUpdatingActionId] = useState<string | null>(null)
   const [statusError, setStatusError] = useState<string | null>(null)
-
-  // Suggestion form state
-  const [sugTitle, setSugTitle] = useState('')
-  const [sugExplanation, setSugExplanation] = useState('')
-  const [sugLocation, setSugLocation] = useState('')
-  const [sugSuccess, setSugSuccess] = useState(false)
 
   // Create Action from Suggestion state
   const [creatingFromSuggestion, setCreatingFromSuggestion] = useState<string | null>(null)
@@ -152,27 +146,7 @@ export default function ReducePage() {
       ? actions
       : actions.filter((a) => a.status === activeTab)
 
-  async function handleSuggestionSubmit(e: React.FormEvent) {
-    e.preventDefault()
-    if (!sugTitle.trim()) return
 
-    await createSuggestion({
-      title: sugTitle.trim(),
-      explanation: sugExplanation.trim() || undefined,
-      relatedLocation: sugLocation || undefined,
-    })
-
-    setSugTitle('')
-    setSugExplanation('')
-    setSugLocation('')
-    setSugSuccess(true)
-
-    // Refresh suggestions
-    const updated = await fetchSuggestions()
-    setSuggestions(updated)
-
-    setTimeout(() => setSugSuccess(false), 3000)
-  }
 
   function openCreateActionForm(sug: StudentSuggestion) {
     setCreatingFromSuggestion(sug.id)
@@ -198,11 +172,19 @@ export default function ReducePage() {
         description: actionDescription.trim() || undefined,
         linkedHotspotLocation: actionLocation || undefined,
         sourceSuggestionId: sugId,
+        userId: appUser?.id ?? '',
+        userName: appUser?.name,
       })
 
       if (newAction) {
         // Mark suggestion as adopted
         await adoptSuggestion(sugId)
+
+        // Award points to the student who made the suggestion
+        const adoptedSug = suggestions.find((s) => s.id === sugId)
+        if (adoptedSug?.reporterId) {
+          await rewardSuggestionAdoption(sugId, adoptedSug.reporterId)
+        }
 
         // Refresh both lists
         const [updatedActions, updatedSuggestions] = await Promise.all([
@@ -614,84 +596,7 @@ export default function ReducePage() {
         </h3>
         <p className="text-xs text-surface-400 mb-4">
           Ideas submitted by students for the Eco Club to review
-        </p>
-
-        {/* Suggestion form */}
-        <div className="bg-white rounded-xl border border-surface-200 p-5 mb-4">
-          {sugSuccess ? (
-            <p className="text-xs text-brand-600 font-medium">
-              ✓ Suggestion submitted! The Eco Club will review it.
-            </p>
-          ) : (
-            <form onSubmit={handleSuggestionSubmit} className="space-y-3">
-              <div>
-                <label className="block text-xs font-medium text-surface-600 mb-1">
-                  Suggestion / Idea *
-                </label>
-                <input
-                  type="text"
-                  value={sugTitle}
-                  onChange={(e) => setSugTitle(e.target.value)}
-                  placeholder="e.g., Replace plastic cutlery with bamboo alternatives"
-                  className="w-full border border-surface-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none"
-                  required
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-surface-600 mb-1">
-                  Explanation <span className="text-surface-400">(optional)</span>
-                </label>
-                <textarea
-                  value={sugExplanation}
-                  onChange={(e) => setSugExplanation(e.target.value)}
-                  rows={2}
-                  maxLength={300}
-                  placeholder="Why this would help..."
-                  className="w-full border border-surface-300 rounded-lg px-3 py-2 text-xs focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none resize-none"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-surface-600 mb-1">
-                  Related Location <span className="text-surface-400">(optional)</span>
-                </label>
-                <select
-                  value={sugLocation}
-                  onChange={(e) => setSugLocation(e.target.value)}
-                  className="w-full border border-surface-300 rounded-lg px-3 py-2 text-xs focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none"
-                >
-                  <option value="">Select a location…</option>
-                  {[
-                    'Dining Hall',
-                    'Student Center',
-                    'Library',
-                    'Gym',
-                    'Lecture Halls',
-                    'Dorms',
-                    'Café / Coffee Shop',
-                  ].map((loc) => (
-                    <option key={loc} value={loc}>
-                      {loc}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className="flex items-center justify-between">
-                <p className="text-xs text-surface-400">
-                  Selected ideas may earn community points when adopted by the Eco Club.
-                </p>
-                <button
-                  type="submit"
-                  disabled={!sugTitle.trim()}
-                  className="px-4 py-1.5 bg-brand-600 text-white text-xs font-medium rounded-lg hover:bg-brand-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                >
-                  Submit Suggestion
-                </button>
-              </div>
-            </form>
-          )}
-        </div>
-
-        {/* Existing suggestions */}
+        </p>        {/* Existing suggestions */}
         {suggestions.length > 0 && (
           <div className="space-y-2">
             {suggestions.map((sug) => (

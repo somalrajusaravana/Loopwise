@@ -1,5 +1,5 @@
 import { Navigate } from 'react-router-dom'
-import { useUser, type UserRole } from '../contexts/UserContext'
+import { useAuth, type UserRole } from '../contexts/AuthContext'
 
 interface Props {
   allowedRoles: UserRole[]
@@ -7,9 +7,9 @@ interface Props {
 }
 
 export default function RoleGuard({ allowedRoles, children }: Props) {
-  const { role } = useUser()
+  const { role } = useAuth()
 
-  if (!allowedRoles.includes(role)) {
+  if (!role || !allowedRoles.includes(role)) {
     return <Navigate to="/" replace />
   }
 

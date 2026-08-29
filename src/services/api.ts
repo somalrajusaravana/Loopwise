@@ -9,11 +9,36 @@ import {
   MOCK_OBSERVATIONS,
   MOCK_ACTIONS,
   MOCK_FEEDBACK,
-  MOCK_REPORTERS,
-  CURRENT_USER,
 } from '../mock/data'
 import type { Observation, ReductionAction, ActionFeedback, PlasticCategory, CampusLocation } from '../types'
 import type { Database } from '../types/supabase'
+
+// ── Reporter Name Cache ──────────────────────────────────────
+let reporterNameCache: Map<string, string> | null = null
+
+async function getReporterName(reporterId: string | null): Promise<string> {
+  if (!reporterId) return 'Unknown'
+
+  // Try to fetch from DB when Supabase is configured
+  if (isSupabaseConfigured()) {
+    if (!reporterNameCache) {
+      reporterNameCache = new Map()
+      const { data: users } = await supabase
+        .from('users')
+        .select('id, name')
+      if (users) {
+        for (const u of users) {
+          reporterNameCache.set(u.id, u.name)
+        }
+      }
+    }
+    return reporterNameCache.get(reporterId) ?? 'Unknown'
+  }
+
+  // Fallback: mock reporters
+  const { MOCK_REPORTERS } = await import('../mock/data')
+  return MOCK_REPORTERS.find((r) => r.id === reporterId)?.name ?? 'Unknown'
+}
 
 // ── Types for computed hotspots ─────────────────────────────
 
@@ -30,7 +55,7 @@ export interface ComputedHotspot {
 
 // ── Type mappers (DB row → app type) ────────────────────────
 
-function mapObservation(row: Database['public']['Tables']['observations']['Row']): Observation {
+async function mapObservation(row: Database['public']['Tables']['observations']['Row']): Promise<Observation> {
   return {
     id: row.id,
     plasticCategory: row.plastic_category as PlasticCategory,
@@ -38,15 +63,17 @@ function mapObservation(row: Database['public']['Tables']['observations']['Row']
     description: row.description ?? '',
     photoUrl: row.photo_storage_path ?? undefined,
     date: row.created_at,
-    reporterName: MOCK_REPORTERS.find((r) => r.id === row.reporter_id)?.name ?? 'Unknown',
+    reporterName: await getReporterName(row.reporter_id),
     reporterId: row.reporter_id ?? '',
     pHash: row.photo_phash ?? undefined,
     flaggedForReview: row.flagged_for_review,
     pointsAwarded: row.points_awarded,
+    aiCategory: (row.ai_category as PlasticCategory) ?? undefined,
+    aiConfidence: row.ai_confidence ?? undefined,
   }
 }
 
-function mapAction(row: Database['public']['Tables']['reduction_actions']['Row']): ReductionAction {
+async function mapAction(row: Database['public']['Tables']['reduction_actions']['Row']): Promise<ReductionAction> {
   return {
     id: row.id,
     title: row.title,
@@ -56,7 +83,7 @@ function mapAction(row: Database['public']['Tables']['reduction_actions']['Row']
     linkedHotspotCategory: row.linked_hotspot_category ?? undefined,
     sourceSuggestionId: row.source_suggestion_id ?? undefined,
     status: row.status,
-    createdBy: MOCK_REPORTERS.find((r) => r.id === row.created_by)?.name ?? 'Eco Club',
+    createdBy: row.created_by ? await getReporterName(row.created_by) : 'Eco Club',
     createdAt: row.created_at,
     assignedTo: row.assigned_to ?? 'Unassigned',
     startDate: row.start_date ?? undefined,
@@ -65,11 +92,11 @@ function mapAction(row: Database['public']['Tables']['reduction_actions']['Row']
   }
 }
 
-function mapFeedback(row: Database['public']['Tables']['action_feedback']['Row']): ActionFeedback {
+async function mapFeedback(row: Database['public']['Tables']['action_feedback']['Row']): Promise<ActionFeedback> {
   return {
     id: row.id,
     actionId: row.action_id,
-    reporterName: MOCK_REPORTERS.find((r) => r.id === row.reporter_id)?.name ?? 'Unknown',
+    reporterName: await getReporterName(row.reporter_id),
     reporterId: row.reporter_id ?? '',
     sentiment: row.sentiment ?? 'neutral',
     comment: row.comment ?? '',
@@ -100,7 +127,7 @@ export async function fetchObservations(): Promise<Observation[]> {
     return [...MOCK_OBSERVATIONS]
   }
 
-  return data.map(mapObservation)
+  return Promise.all(data.map(mapObservation))
 }
 
 export async function createObservation(obs: {
@@ -111,9 +138,11 @@ export async function createObservation(obs: {
   photoPhash?: string
   flaggedForReview?: boolean
   pointsAwarded?: number
+  userId: string
+  aiCategory?: PlasticCategory
+  aiConfidence?: number
 }): Promise<Observation | null> {
   if (!isSupabaseConfigured()) {
-    // Mock mode: create a local observation
     const newObs: Observation = {
       id: `obs-${Date.now()}`,
       plasticCategory: obs.plasticCategory,
@@ -121,11 +150,13 @@ export async function createObservation(obs: {
       description: obs.description ?? '',
       photoUrl: obs.photoStoragePath,
       date: new Date().toISOString(),
-      reporterName: CURRENT_USER.name,
-      reporterId: CURRENT_USER.id,
+      reporterName: 'Student',
+      reporterId: obs.userId,
       pHash: obs.photoPhash,
       flaggedForReview: obs.flaggedForReview ?? false,
       pointsAwarded: obs.pointsAwarded ?? 10,
+      aiCategory: obs.aiCategory,
+      aiConfidence: obs.aiConfidence,
     }
     return newObs
   }
@@ -141,7 +172,9 @@ export async function createObservation(obs: {
       photo_phash: obs.photoPhash ?? null,
       flagged_for_review: obs.flaggedForReview ?? false,
       points_awarded: obs.pointsAwarded ?? 10,
-      reporter_id: CURRENT_USER.id,
+      reporter_id: obs.userId,
+      ai_category: obs.aiCategory ?? null,
+      ai_confidence: obs.aiConfidence ?? null,
     })
     .select()
     .single()
@@ -232,7 +265,7 @@ export async function fetchActions(): Promise<ReductionAction[]> {
     return [...MOCK_ACTIONS]
   }
 
-  return data.map(mapAction)
+  return Promise.all(data.map(mapAction))
 }
 
 export async function createAction(action: {
@@ -242,6 +275,8 @@ export async function createAction(action: {
   linkedHotspotCategory?: string
   sourceSuggestionId?: string
   assignedTo?: string
+  userId: string
+  userName?: string
 }): Promise<ReductionAction | null> {
   if (!isSupabaseConfigured()) {
     const newAction: ReductionAction = {
@@ -253,7 +288,7 @@ export async function createAction(action: {
       linkedHotspotCategory: action.linkedHotspotCategory,
       sourceSuggestionId: action.sourceSuggestionId,
       status: 'suggested',
-      createdBy: CURRENT_USER.name,
+      createdBy: action.userName ?? 'Eco Club',
       createdAt: new Date().toISOString(),
       assignedTo: action.assignedTo ?? 'Unassigned',
       notes: [],
@@ -261,14 +296,13 @@ export async function createAction(action: {
     return newAction
   }
 
-  // Try with source_suggestion_id first; fall back without it if column doesn't exist
   let insertData: Record<string, unknown> = {
     id: `act-${Date.now()}`,
     title: action.title,
     description: action.description ?? null,
     linked_hotspot_location: action.linkedHotspotLocation ?? null,
     linked_hotspot_category: action.linkedHotspotCategory ?? null,
-    created_by: CURRENT_USER.id,
+    created_by: action.userId,
     assigned_to: action.assignedTo ?? 'Unassigned',
   }
   if (action.sourceSuggestionId) {
@@ -341,7 +375,7 @@ export async function fetchFeedback(): Promise<ActionFeedback[]> {
     return [...MOCK_FEEDBACK]
   }
 
-  return data.map(mapFeedback)
+  return Promise.all(data.map(mapFeedback))
 }
 
 export async function fetchFeedbackForAction(actionId: string): Promise<ActionFeedback[]> {
@@ -360,25 +394,32 @@ export async function fetchFeedbackForAction(actionId: string): Promise<ActionFe
     return MOCK_FEEDBACK.filter((f) => f.actionId === actionId)
   }
 
-  return data.map(mapFeedback)
+  return Promise.all(data.map(mapFeedback))
 }
 
 export async function createFeedback(feedback: {
   actionId: string
   sentiment: 'positive' | 'neutral' | 'negative'
   comment: string
-  photoStoragePath?: string
+  photoFile?: File
   location?: string
+  userId: string
 }): Promise<ActionFeedback | null> {
+  let photoStoragePath: string | null = null
+  if (feedback.photoFile) {
+    const uploaded = await uploadPhoto('feedback-photos', feedback.photoFile, feedback.userId)
+    if (uploaded) photoStoragePath = uploaded
+  }
+
   if (!isSupabaseConfigured()) {
     const newFeedback: ActionFeedback = {
       id: `fb-${Date.now()}`,
       actionId: feedback.actionId,
-      reporterName: CURRENT_USER.name,
-      reporterId: CURRENT_USER.id,
+      reporterName: 'Student',
+      reporterId: feedback.userId,
       sentiment: feedback.sentiment,
       comment: feedback.comment,
-      photoUrl: feedback.photoStoragePath,
+      photoUrl: photoStoragePath ?? undefined,
       date: new Date().toISOString().split('T')[0],
       location: (feedback.location ?? 'Other') as CampusLocation,
     }
@@ -392,9 +433,9 @@ export async function createFeedback(feedback: {
       action_id: feedback.actionId,
       sentiment: feedback.sentiment,
       comment: feedback.comment,
-      photo_storage_path: feedback.photoStoragePath ?? null,
+      photo_storage_path: photoStoragePath,
       location: feedback.location ?? null,
-      reporter_id: CURRENT_USER.id,
+      reporter_id: feedback.userId,
     })
     .select()
     .single()
@@ -449,6 +490,7 @@ export async function createSuggestion(suggestion: {
   title: string
   explanation?: string
   relatedLocation?: string
+  userId: string
 }): Promise<StudentSuggestion | null> {
   if (!isSupabaseConfigured()) {
     return {
@@ -457,7 +499,7 @@ export async function createSuggestion(suggestion: {
       explanation: suggestion.explanation,
       relatedLocation: suggestion.relatedLocation,
       status: 'pending',
-      reporterId: CURRENT_USER.id,
+      reporterId: suggestion.userId,
       createdAt: new Date().toISOString(),
     }
   }
@@ -469,7 +511,7 @@ export async function createSuggestion(suggestion: {
       title: suggestion.title,
       explanation: suggestion.explanation ?? null,
       related_location: suggestion.relatedLocation ?? null,
-      reporter_id: CURRENT_USER.id,
+      reporter_id: suggestion.userId,
     })
     .select()
     .single()
@@ -550,13 +592,14 @@ export async function fetchDashboardStats(): Promise<DashboardStats> {
 
 export async function uploadPhoto(
   bucket: 'observation-photos' | 'feedback-photos',
-  file: File
+  file: File,
+  userId?: string
 ): Promise<string | null> {
   if (!isSupabaseConfigured()) {
-    return URL.createObjectURL(file) // Mock: return blob URL
+    return URL.createObjectURL(file)
   }
 
-  const filePath = `${CURRENT_USER.id}/${Date.now()}-${file.name}`
+  const filePath = `${userId ?? 'unknown'}/${Date.now()}-${file.name}`
 
   const { error } = await supabase.storage
     .from(bucket)
@@ -596,7 +639,7 @@ export async function checkPHashDuplicate(newPHash: string): Promise<boolean> {
   for (const row of data) {
     if (row.id && row.photo_phash) {
       const distance = hammingDistance(newPHash, row.photo_phash as string)
-      if (distance <= 5) return true // 85%+ similarity
+      if (distance <= 10) return true // DCT pHash threshold: ≤10/64 bits different (~84%+ similarity)
     }
   }
 
@@ -610,4 +653,189 @@ function hammingDistance(a: string, b: string): number {
     if (a[i] !== b[i]) distance++
   }
   return distance
+}
+
+// ── Campus Locations ────────────────────────────────────────
+
+export interface CampusLocationEntry {
+  id: string
+  name: string
+  description?: string
+}
+
+export async function fetchCampusLocations(): Promise<CampusLocationEntry[]> {
+  if (!isSupabaseConfigured()) {
+    return []
+  }
+
+  const { data, error } = await supabase
+    .from('campus_locations')
+    .select('*')
+    .order('name')
+
+  if (error) {
+    console.error('Failed to fetch campus locations:', error)
+    return []
+  }
+
+  return data.map((row) => ({
+    id: row.id,
+    name: row.name,
+    description: row.description ?? undefined,
+  }))
+}
+
+// ── Profiles ────────────────────────────────────────────────
+
+export interface UserProfile {
+  id: string
+  name: string
+  role: string
+  department?: string
+}
+
+export async function fetchProfiles(): Promise<UserProfile[]> {
+  if (!isSupabaseConfigured()) {
+    return []
+  }
+
+  const { data, error } = await supabase
+    .from('profiles')
+    .select('*')
+
+  if (error) {
+    console.error('Failed to fetch profiles:', error)
+    return []
+  }
+
+  return data.map((row) => ({
+    id: row.id,
+    name: row.name,
+    role: row.role,
+    department: row.department ?? undefined,
+  }))
+}
+
+// ── Plastic Logs ────────────────────────────────────────────
+
+export interface PlasticLog {
+  id: string
+  userId: string
+  locationId: string
+  itemName: string
+  category: string
+  quantity: number
+  estimatedWeightG: number
+  imageUrl?: string
+  source: string
+  loggedAt: string
+  createdAt: string
+}
+
+export async function fetchPlasticLogs(): Promise<PlasticLog[]> {
+  if (!isSupabaseConfigured()) {
+    return []
+  }
+
+  const { data, error } = await supabase
+    .from('plastic_logs')
+    .select('*')
+    .order('created_at', { ascending: false })
+
+  if (error) {
+    console.error('Failed to fetch plastic logs:', error)
+    return []
+  }
+
+  return data.map((row) => ({
+    id: row.id,
+    userId: row.user_id,
+    locationId: row.location_id,
+    itemName: row.item_name,
+    category: row.category,
+    quantity: row.quantity,
+    estimatedWeightG: row.estimated_weight_g,
+    imageUrl: row.image_url ?? undefined,
+    source: row.source,
+    loggedAt: row.logged_at,
+    createdAt: row.created_at,
+  }))
+}
+
+// ── Reuse Listings ──────────────────────────────────────────
+
+export interface ReuseListing {
+  id: string
+  ownerId: string
+  itemName: string
+  description: string
+  quantity: number
+  condition: string
+  locationId: string
+  status: string
+  createdAt: string
+}
+
+export async function fetchReuseListings(): Promise<ReuseListing[]> {
+  if (!isSupabaseConfigured()) {
+    return []
+  }
+
+  const { data, error } = await supabase
+    .from('reuse_listings')
+    .select('*')
+    .order('created_at', { ascending: false })
+
+  if (error) {
+    console.error('Failed to fetch reuse listings:', error)
+    return []
+  }
+
+  return data.map((row) => ({
+    id: row.id,
+    ownerId: row.owner_id,
+    itemName: row.item_name,
+    description: row.description,
+    quantity: row.quantity,
+    condition: row.condition,
+    locationId: row.location_id,
+    status: row.status,
+    createdAt: row.created_at,
+  }))
+}
+
+// ── Reuse Requests ──────────────────────────────────────────
+
+export interface ReuseRequest {
+  id: string
+  listingId: string
+  requesterId: string
+  quantity: number
+  status: string
+  createdAt: string
+}
+
+export async function fetchReuseRequests(): Promise<ReuseRequest[]> {
+  if (!isSupabaseConfigured()) {
+    return []
+  }
+
+  const { data, error } = await supabase
+    .from('reuse_requests')
+    .select('*')
+    .order('created_at', { ascending: false })
+
+  if (error) {
+    console.error('Failed to fetch reuse requests:', error)
+    return []
+  }
+
+  return data.map((row) => ({
+    id: row.id,
+    listingId: row.listing_id,
+    requesterId: row.requester_id,
+    quantity: row.quantity,
+    status: row.status,
+    createdAt: row.created_at,
+  }))
 }

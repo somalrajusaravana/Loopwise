@@ -6,7 +6,11 @@ import {
   fetchActions,
   fetchFeedback,
   computeHotspots,
+  fetchPlasticLogs,
+  fetchCampusLocations,
   type ComputedHotspot,
+  type PlasticLog,
+  type CampusLocationEntry,
 } from '../services/api'
 
 export default function ImpactPage() {
@@ -14,20 +18,26 @@ export default function ImpactPage() {
   const [actions, setActions] = useState<ReductionAction[]>([])
   const [feedback, setFeedback] = useState<ActionFeedback[]>([])
   const [hotspots, setHotspots] = useState<ComputedHotspot[]>([])
+  const [plasticLogs, setPlasticLogs] = useState<PlasticLog[]>([])
+  const [campusLocations, setCampusLocations] = useState<CampusLocationEntry[]>([])
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
     async function load() {
-      const [obs, acts, fb, hs] = await Promise.all([
+      const [obs, acts, fb, hs, logs, locations] = await Promise.all([
         fetchObservations(),
         fetchActions(),
         fetchFeedback(),
         computeHotspots(),
+        fetchPlasticLogs(),
+        fetchCampusLocations(),
       ])
       setObservations(obs)
       setActions(acts)
       setFeedback(fb)
       setHotspots(hs)
+      setPlasticLogs(logs)
+      setCampusLocations(locations)
       setLoading(false)
     }
     load()
@@ -95,6 +105,12 @@ export default function ImpactPage() {
     (a) => a.status === 'completed' || a.status === 'active'
   ).length
 
+  // Plastic logs metrics
+  const totalPlasticItems = plasticLogs.reduce((sum, log) => sum + log.quantity, 0)
+  const totalEstimatedWeight = plasticLogs.reduce((sum, log) => sum + log.estimatedWeightG, 0)
+  const uniqueLogLocations = new Set(plasticLogs.map((l) => l.locationId)).size
+  const campusLocationMap = new Map(campusLocations.map((l) => [l.id, l.name]))
+
   const metrics = [
     {
       label: 'Community Observations',
@@ -137,6 +153,26 @@ export default function ImpactPage() {
       label: 'Avg. Confidence Score',
       value: `${avgConfidence}/100`,
       description: 'Across all active and completed actions',
+    },
+  ]
+
+  const plasticLogsMetrics = [
+    {
+      label: 'Plastic Items Logged',
+      value: totalPlasticItems,
+      description: `Across ${plasticLogs.length} log entries`,
+    },
+    {
+      label: 'Est. Weight Tracked',
+      value: totalEstimatedWeight >= 1000
+        ? `${(totalEstimatedWeight / 1000).toFixed(1)}kg`
+        : `${Math.round(totalEstimatedWeight)}g`,
+      description: 'Community-reported plastic waste estimate',
+    },
+    {
+      label: 'Locations Monitored',
+      value: uniqueLogLocations,
+      description: `${campusLocations.length} campus locations registered`,
     },
   ]
 
@@ -218,6 +254,56 @@ export default function ImpactPage() {
           ))}
         </div>
       </div>
+
+      {/* Plastic Waste Tracking */}
+      {plasticLogs.length > 0 && (
+        <div>
+          <h3 className="text-sm font-semibold text-surface-500 uppercase tracking-wide mb-3">
+            Plastic Waste Tracking
+          </h3>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            {plasticLogsMetrics.map((m) => (
+              <div
+                key={m.label}
+                className="bg-white rounded-xl border border-surface-200 p-5"
+              >
+                <p className="text-xs font-medium text-surface-400 uppercase tracking-wide">
+                  {m.label}
+                </p>
+                <p className="text-2xl font-bold text-surface-800 mt-1">
+                  {m.value}
+                </p>
+                <p className="text-xs text-surface-400 mt-1">{m.description}</p>
+              </div>
+            ))}
+          </div>
+          {/* Recent plastic log entries */}
+          <div className="bg-white rounded-xl border border-surface-200 p-5 mt-4">
+            <p className="text-xs font-medium text-surface-500 mb-3">Recent Community-Logged Plastic Items</p>
+            <div className="space-y-2">
+              {plasticLogs.slice(0, 5).map((log) => (
+                <div key={log.id} className="flex items-center gap-3 text-xs">
+                  <span className="font-medium text-surface-700 w-32 truncate">{log.itemName}</span>
+                  <span className="text-surface-400">×{log.quantity}</span>
+                  <span className="text-surface-400">•</span>
+                  <span className="text-surface-500">
+                    {campusLocationMap.get(log.locationId) ?? 'Unknown location'}
+                  </span>
+                  <span className="text-surface-400">•</span>
+                  <span className="text-surface-400">~{log.estimatedWeightG}g</span>
+                  <span className={`ml-auto px-2 py-0.5 rounded-full font-medium ${
+                    log.source === 'ai_assisted'
+                      ? 'bg-blue-50 text-blue-600 border border-blue-200'
+                      : 'bg-surface-100 text-surface-500 border border-surface-200'
+                  }`}>
+                    {log.source === 'ai_assisted' ? 'AI Assisted' : 'Manual'}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Action Lifecycle Breakdown */}
       <div>

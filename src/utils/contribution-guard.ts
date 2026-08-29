@@ -45,8 +45,9 @@ export function checkForDuplicatePhotos(
     if (!obs.pHash) continue
     const similarity = computePhashSimilarity(newPHash, obs.pHash)
 
-    // 85%+ similarity triggers the duplicate flag
-    if (similarity >= 0.85) {
+    // ~84%+ similarity triggers the duplicate flag (hamming ≤ 10/64 bits)
+    // Consistent with the DCT pHash threshold in api.ts
+    if (similarity >= 0.84) {
       return {
         isDuplicate: true,
         similarTo: obs.id,

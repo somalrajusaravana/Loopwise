@@ -35,6 +35,8 @@ export interface Observation {
   pHash?: string          // Perceptual hash for duplicate detection
   flaggedForReview: boolean
   pointsAwarded: number
+  aiCategory?: PlasticCategory   // AI-predicted category (from Edge Function)
+  aiConfidence?: number          // AI confidence score (0–1)
 }
 
 // ── Hotspot Module ───────────────────────────────────────────
@@ -113,3 +115,61 @@ export interface DashboardStats {
   communityVerifiedActions: number
   recentActivity: Observation[]
 }
+
+// ── Points & Rewards ──────────────────────────────────────
+
+export type PointReason =
+  | 'verified_observation'
+  | 'weekly_streak_bonus'
+  | 'suggestion_adopted'
+  | 'feedback_submitted'
+  | 'before_after_bonus'
+  | 'daily_checkin'
+
+export type PointReferenceType =
+  | 'observation'
+  | 'suggestion'
+  | 'feedback'
+  | 'checkin'
+  | 'streak'
+
+export interface PointsLogEntry {
+  id: string
+  userId: string
+  points: number
+  reason: PointReason
+  referenceId: string
+  referenceType: PointReferenceType
+  createdAt: string
+}
+
+export interface DailyCheckin {
+  id: string
+  userId: string
+  checkinType: 'observation' | 'nothing_to_report'
+  checkinDate: string  // YYYY-MM-DD
+  observationId?: string
+  createdAt: string
+}
+
+export interface StreakInfo {
+  currentStreak: number
+  longestStreak: number
+  todayCheckedIn: boolean
+  todayCheckinType?: 'observation' | 'nothing_to_report'
+  daysUntilBonus: number
+}
+
+// ── Point Values (centralized) ────────────────────────────
+
+export const POINT_VALUES = {
+  verified_observation: 10,
+  weekly_streak_bonus: 15,
+  suggestion_adopted: 10,
+  feedback_submitted: 5,
+  before_after_bonus: 15,
+  daily_checkin: 2,
+} as const
+
+// Anti-spam: max observations per student per day
+export const DAILY_OBSERVATION_LIMIT = 5

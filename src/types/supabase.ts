@@ -43,6 +43,8 @@ export interface Database {
           flagged_for_review: boolean
           points_awarded: number
           reporter_id: string | null
+          ai_category: string | null
+          ai_confidence: number | null
           created_at: string
         }
         Insert: {
@@ -55,6 +57,8 @@ export interface Database {
           flagged_for_review?: boolean
           points_awarded?: number
           reporter_id?: string | null
+          ai_category?: string | null
+          ai_confidence?: number | null
           created_at?: string
         }
         Update: {
@@ -67,6 +71,8 @@ export interface Database {
           flagged_for_review?: boolean
           points_awarded?: number
           reporter_id?: string | null
+          ai_category?: string | null
+          ai_confidence?: number | null
           created_at?: string
         }
       }
@@ -175,6 +181,206 @@ export interface Database {
           related_location?: string | null
           status?: 'pending' | 'adopted' | 'dismissed'
           reporter_id?: string | null
+          created_at?: string
+        }
+      }
+      points_log: {
+        Row: {
+          id: string
+          user_id: string
+          points: number
+          reason: string
+          reference_id: string
+          reference_type: string
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          user_id: string
+          points: number
+          reason: string
+          reference_id: string
+          reference_type: string
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          user_id?: string
+          points?: number
+          reason?: string
+          reference_id?: string
+          reference_type?: string
+          created_at?: string
+        }
+      }
+      daily_checkins: {
+        Row: {
+          id: string
+          user_id: string
+          checkin_type: string
+          checkin_date: string
+          observation_id: string | null
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          user_id: string
+          checkin_type: string
+          checkin_date: string
+          observation_id?: string | null
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          user_id?: string
+          checkin_type?: string
+          checkin_date?: string
+          observation_id?: string | null
+          created_at?: string
+        }
+      }
+      campus_locations: {
+        Row: {
+          id: string
+          name: string
+          description: string | null
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          name: string
+          description?: string | null
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          name?: string
+          description?: string | null
+          created_at?: string
+        }
+      }
+      profiles: {
+        Row: {
+          id: string
+          name: string
+          role: string
+          department: string | null
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          name: string
+          role: string
+          department?: string | null
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          name?: string
+          role?: string
+          department?: string | null
+          created_at?: string
+        }
+      }
+      plastic_logs: {
+        Row: {
+          id: string
+          user_id: string
+          location_id: string
+          item_name: string
+          category: string
+          quantity: number
+          estimated_weight_g: number
+          image_url: string | null
+          source: string
+          logged_at: string
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          user_id: string
+          location_id: string
+          item_name: string
+          category: string
+          quantity: number
+          estimated_weight_g: number
+          image_url?: string | null
+          source?: string
+          logged_at?: string
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          user_id?: string
+          location_id?: string
+          item_name?: string
+          category?: string
+          quantity?: number
+          estimated_weight_g?: number
+          image_url?: string | null
+          source?: string
+          logged_at?: string
+          created_at?: string
+        }
+      }
+      reuse_listings: {
+        Row: {
+          id: string
+          owner_id: string
+          item_name: string
+          description: string
+          quantity: number
+          condition: string
+          location_id: string
+          status: string
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          owner_id: string
+          item_name: string
+          description: string
+          quantity: number
+          condition: string
+          location_id: string
+          status?: string
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          owner_id?: string
+          item_name?: string
+          description?: string
+          quantity?: number
+          condition?: string
+          location_id?: string
+          status?: string
+          created_at?: string
+        }
+      }
+      reuse_requests: {
+        Row: {
+          id: string
+          listing_id: string
+          requester_id: string
+          quantity: number
+          status: string
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          listing_id: string
+          requester_id: string
+          quantity: number
+          status?: string
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          listing_id?: string
+          requester_id?: string
+          quantity?: number
+          status?: string
           created_at?: string
         }
       }

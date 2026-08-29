@@ -1,5 +1,5 @@
 import { NavLink, Outlet } from 'react-router-dom'
-import { useUser } from '../contexts/UserContext'
+import { useAuth } from '../contexts/AuthContext'
 
 const STUDENT_NAV = [
   { to: '/', label: 'Dashboard', icon: '◉' },
@@ -16,8 +16,13 @@ const ECO_CLUB_NAV = [
 ]
 
 export default function Layout() {
-  const { role, setRole, userName, userInitials } = useUser()
+  const { appUser, role, signOut } = useAuth()
   const navItems = role === 'student' ? STUDENT_NAV : ECO_CLUB_NAV
+  const userName = appUser?.name ?? 'Loading...'
+  const userInitials = appUser?.name
+    ? appUser.name.split(' ').map((n) => n[0]).join('').toUpperCase().slice(0, 2)
+    : '..'
+  const roleLabel = role === 'student' ? 'Student' : role === 'eco-club' ? 'Eco Club' : 'Loading…'
 
   return (
     <div className="flex h-screen overflow-hidden">
@@ -54,30 +59,14 @@ export default function Layout() {
           ))}
         </nav>
 
-        {/* Role Switcher */}
+        {/* Sign Out */}
         <div className="px-3 py-3 border-t border-surface-700">
-          <div className="flex bg-surface-800 rounded-lg p-0.5 mb-3">
-            <button
-              onClick={() => setRole('student')}
-              className={`flex-1 px-2 py-1.5 rounded-md text-xs font-medium transition-colors ${
-                role === 'student'
-                  ? 'bg-brand-600 text-white'
-                  : 'text-surface-400 hover:text-white'
-              }`}
-            >
-              Student
-            </button>
-            <button
-              onClick={() => setRole('eco-club')}
-              className={`flex-1 px-2 py-1.5 rounded-md text-xs font-medium transition-colors ${
-                role === 'eco-club'
-                  ? 'bg-brand-600 text-white'
-                  : 'text-surface-400 hover:text-white'
-              }`}
-            >
-              Eco Club
-            </button>
-          </div>
+          <button
+            onClick={signOut}
+            className="w-full px-3 py-2 text-xs font-medium text-surface-400 hover:text-white hover:bg-surface-800 rounded-lg transition-colors"
+          >
+            Sign out
+          </button>
         </div>
 
         {/* User Profile */}
@@ -89,7 +78,7 @@ export default function Layout() {
             <div>
               <p className="text-sm font-medium">{userName}</p>
               <p className="text-xs text-surface-400">
-                {role === 'student' ? 'Student' : 'Eco Club'}
+                {roleLabel}
               </p>
             </div>
           </div>
