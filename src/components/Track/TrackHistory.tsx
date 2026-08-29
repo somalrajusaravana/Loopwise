@@ -102,6 +102,11 @@ export default function TrackHistory({ newObservations = [] }: Props) {
                 {obs.description}
               </p>
             )}
+            {typeof obs.aiConfidence === 'number' && (
+              <p className="text-xs text-purple-500 mt-1">
+                🤖 AI Confidence: {Math.round(obs.aiConfidence * 100)}%
+              </p>
+            )}
             <div className="flex items-center gap-3 mt-2 text-xs text-surface-400">
               <span>{obs.reporterName}</span>
               <span>{formatDate(obs.date)}</span>
